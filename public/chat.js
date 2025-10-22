@@ -1,27 +1,74 @@
 /**
- * Cloudflare Workers AI Chat — modern UI + robust guardrails handling
- * Key upgrades:
- * - If a prompt is blocked, we (1) pop it from chatHistory and (2) add it to
- *   blockedUserContents so it will NEVER be resent on later turns.
- * - Each request sends { messages, blockedUserContents }.
- * - Safer rendering (textContent), better errors, smooth scrolling.
+ * Cloudflare Workers AI Chat — Stunning UI with markdown, themes, and killer error handling
+ * Features:
+ * - Light/Dark theme toggle with smooth transitions
+ * - Markdown rendering for AI responses with syntax highlighting
+ * - Enhanced error handling with detailed messages
+ * - Optional AI Gateway with smart detection
+ * - Dynamic chat bubbles with proper sizing
  */
 
 const chatMessages = document.getElementById("chat-messages");
 const userInput = document.getElementById("user-input");
 const sendButton = document.getElementById("send-button");
 const typingIndicator = document.getElementById("typing-indicator");
+const themeToggle = document.getElementById("theme-toggle");
 
 let chatHistory = [
-  { role: "assistant", content: "Hello! I'm an LLM chat app powered by Cloudflare Workers AI. How can I help you today?" }
+  { role: "assistant", content: "Hello! I'm an AI assistant powered by Cloudflare Workers AI. I can help you with questions, coding, writing, and more. How can I assist you today?" }
 ];
 
-// Any user prompts that were blocked by Guardrails get remembered here so they
-// are filtered out of future requests (even if the UI somehow didn’t pop them).
+// Any user prompts that were blocked by Guardrails get remembered here
 const blockedUserContents = [];
 
 let isProcessing = false;
 let lastSentUserText = "";
+
+// Configure marked for markdown rendering
+if (typeof marked !== 'undefined') {
+  marked.setOptions({
+    breaks: true,
+    gfm: true,
+    highlight: function(code, lang) {
+      if (typeof hljs !== 'undefined' && lang && hljs.getLanguage(lang)) {
+        try {
+          return hljs.highlight(code, { language: lang }).value;
+        } catch (err) {}
+      }
+      return code;
+    }
+  });
+}
+
+// Theme toggle functionality
+function initTheme() {
+  const savedTheme = localStorage.getItem('theme') || 'dark';
+  document.documentElement.setAttribute('data-theme', savedTheme);
+  updateThemeIcon(savedTheme);
+}
+
+function toggleTheme() {
+  const currentTheme = document.documentElement.getAttribute('data-theme');
+  const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', newTheme);
+  localStorage.setItem('theme', newTheme);
+  updateThemeIcon(newTheme);
+}
+
+function updateThemeIcon(theme) {
+  const sunIcon = themeToggle.querySelector('.sun-icon');
+  const moonIcon = themeToggle.querySelector('.moon-icon');
+  if (theme === 'dark') {
+    sunIcon.style.display = 'block';
+    moonIcon.style.display = 'none';
+  } else {
+    sunIcon.style.display = 'none';
+    moonIcon.style.display = 'block';
+  }
+}
+
+initTheme();
+themeToggle.addEventListener('click', toggleTheme);
 
 // Seed initial assistant bubble
 renderMessage("assistant", chatHistory[0].content);
@@ -60,7 +107,7 @@ async function sendMessage() {
 
   // Assistant bubble we stream into
   const assistantEl = renderMessage("assistant", "");
-  const p = assistantEl.querySelector("p");
+  const contentDiv = assistantEl.querySelector(".message-content");
 
   try {
     // Filter out any previously blocked user prompts before sending
@@ -73,23 +120,41 @@ async function sendMessage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         messages: sanitizedMessages,
-        blockedUserContents // server double-checks too
+        blockedUserContents
       })
     });
 
     if (!res.ok) {
-      const { text, wasPromptBlocked, wasResponseBlocked } = await mapError(res);
-      p.textContent = text;
-
-      if (wasPromptBlocked) {
-        // Remove the offending user turn from chatHistory so it never comes back
+      // Enhanced error handling with detailed messages
+      const errorData = await res.json().catch(() => ({}));
+      
+      // Remove the empty assistant message
+      assistantEl.remove();
+      
+      if (errorData.errorType === "prompt_blocked") {
+        // Prompt was blocked - remove from history
         popLastUserTurn();
-        // Remember it so we filter it out of all future requests (belt + suspenders)
         rememberBlockedUser(lastSentUserText);
-        renderMutedNotice("That message wasn’t sent due to safety policy.");
+        renderErrorMessage(
+          errorData.error || "Prompt Blocked",
+          errorData.details || "Your message was blocked by security policy.",
+          "prompt_blocked"
+        );
+      } else if (errorData.errorType === "response_blocked") {
+        // Response was blocked - keep user message in history
+        renderErrorMessage(
+          errorData.error || "Response Blocked",
+          errorData.details || "The AI's response was blocked by security policy.",
+          "response_blocked"
+        );
+      } else {
+        // Generic error
+        renderErrorMessage(
+          errorData.error || "Error",
+          errorData.details || "An error occurred while processing your request.",
+          "general"
+        );
       }
-
-      // Response-blocked doesn’t require popping a user turn
       return;
     }
 
@@ -108,7 +173,12 @@ async function sendMessage() {
           const json = JSON.parse(line.slice(5));
           if (typeof json.response === "string") {
             acc += json.response;
-            p.textContent = acc; // safe — no HTML injection
+            // Render markdown in real-time
+            if (typeof marked !== 'undefined') {
+              contentDiv.innerHTML = marked.parse(acc);
+            } else {
+              contentDiv.textContent = acc;
+            }
             scrollToBottom();
           }
         } catch (e) {
@@ -121,7 +191,12 @@ async function sendMessage() {
     chatHistory.push({ role: "assistant", content: acc || "…" });
   } catch (err) {
     console.error(err);
-    p.textContent = "⚠️ Network or server error. Please try again.";
+    assistantEl.remove();
+    renderErrorMessage(
+      "Network Error",
+      "Unable to connect to the server. Please check your connection and try again.",
+      "network"
+    );
   } finally {
     typingIndicator.classList.remove("visible");
     isProcessing = false;
@@ -133,25 +208,53 @@ async function sendMessage() {
 function renderMessage(role, content) {
   const wrap = document.createElement("div");
   wrap.className = `message ${role}-message`;
-  const p = document.createElement("p");
-  p.textContent = content;
-  wrap.appendChild(p);
+  const contentDiv = document.createElement("div");
+  contentDiv.className = "message-content";
+  
+  if (role === "assistant" && typeof marked !== 'undefined' && content) {
+    // Render markdown for assistant messages
+    contentDiv.innerHTML = marked.parse(content);
+  } else {
+    // Plain text for user messages or if marked is not available
+    contentDiv.textContent = content;
+  }
+  
+  wrap.appendChild(contentDiv);
   chatMessages.appendChild(wrap);
   scrollToBottom();
   return wrap;
 }
 
-function renderMutedNotice(text) {
+function renderErrorMessage(title, details, errorType) {
   const wrap = document.createElement("div");
-  wrap.className = "message assistant-message";
-  wrap.style.opacity = "0.75";
-  wrap.style.fontSize = "13px";
-  const p = document.createElement("p");
-  p.textContent = text;
-  wrap.appendChild(p);
+  wrap.className = "error-message";
+  
+  const titleDiv = document.createElement("div");
+  titleDiv.className = "error-title";
+  
+  // Add error icon
+  const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  icon.setAttribute("class", "error-icon");
+  icon.setAttribute("viewBox", "0 0 24 24");
+  icon.setAttribute("fill", "currentColor");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", "M12 22C6.47715 22 2 17.5228 2 12C2 6.47715 6.47715 2 12 2C17.5228 2 22 6.47715 22 12C22 17.5228 17.5228 22 12 22ZM12 20C16.4183 20 20 16.4183 20 12C20 7.58172 16.4183 4 12 4C7.58172 4 4 7.58172 4 12C4 16.4183 7.58172 20 12 20ZM11 15H13V17H11V15ZM11 7H13V13H11V7Z");
+  icon.appendChild(path);
+  
+  titleDiv.appendChild(icon);
+  titleDiv.appendChild(document.createTextNode(title));
+  
+  const detailsDiv = document.createElement("div");
+  detailsDiv.className = "error-details";
+  detailsDiv.textContent = details;
+  
+  wrap.appendChild(titleDiv);
+  wrap.appendChild(detailsDiv);
   chatMessages.appendChild(wrap);
   scrollToBottom();
+  return wrap;
 }
+
 
 function scrollToBottom() {
   chatMessages.scrollTop = chatMessages.scrollHeight;
@@ -180,30 +283,3 @@ function rememberBlockedUser(text) {
   }
 }
 
-async function mapError(res) {
-  const fallback = "Sorry, there was an error processing your request.";
-  try {
-    const data = await res.json();
-    const msg = (data && (data.error || data.message || data.msg)) || "";
-    const wasPromptBlocked = /Prompt was blocked by guardrails/i.test(msg);
-    const wasResponseBlocked = /Response was blocked by guardrails/i.test(msg);
-
-    if (wasPromptBlocked) {
-      return {
-        text: "⚠️ Prompt was blocked by guardrails due to security policy.",
-        wasPromptBlocked: true,
-        wasResponseBlocked: false
-      };
-    }
-    if (wasResponseBlocked) {
-      return {
-        text: "⚠️ Response was blocked by guardrails.",
-        wasPromptBlocked: false,
-        wasResponseBlocked: true
-      };
-    }
-    return { text: msg || fallback, wasPromptBlocked: false, wasResponseBlocked: false };
-  } catch {
-    return { text: fallback, wasPromptBlocked: false, wasResponseBlocked: false };
-  }
-}

@@ -3,6 +3,11 @@ import { Env, ChatMessage } from "./types";
 // Model ID for Workers AI model
 const MODEL_ID = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 
+// AI Gateway Configuration (optional)
+// Uncomment and set your gateway ID to enable AI Gateway with guardrails
+// If not set, requests will go directly to the model
+const AI_GATEWAY_ID = "chatbot-gateway"; // Create an AI Gateway in the Dashboard and set the ID here
+
 // Default system prompt (kept) + small safety shim
 const SYSTEM_PROMPT =
   "You are a helpful, friendly assistant. Provide concise and accurate responses.";
@@ -134,42 +139,73 @@ async function handleChatRequest(request: Request, env: Env): Promise<Response> 
     // Build sanitized model messages
     const modelMessages = buildModelMessages(messages, blocked);
 
-    // Run LLM request via AI Gateway, requesting raw response
-    const aiResponse = await env.AI.run(
-      MODEL_ID,
-      {
-        messages: modelMessages,
-        max_tokens: 2048,
-        // Conservative decoding reduces borderline content volatility
-        temperature: 0.2,
-        top_p: 0.9,
-      },
-      {
-        returnRawResponse: true,
-        gateway: {
-          id: "chatbot-gateway",
-          skipCache: false,
-          cacheTtl: 3600,
-        },
-      },
-    );
+    // Build AI options
+    const aiOptions: any = {
+      messages: modelMessages,
+      max_tokens: 2048,
+      // Conservative decoding reduces borderline content volatility
+      temperature: 0.2,
+      top_p: 0.9,
+    };
 
-    // Check if the response was blocked by Guardrails (e.g., HTTP 424)
+    // Build run options with optional gateway
+    const runOptions: any = {
+      returnRawResponse: true,
+    };
+
+    // Only add gateway if AI_GATEWAY_ID is configured
+    if (AI_GATEWAY_ID) {
+      runOptions.gateway = {
+        id: AI_GATEWAY_ID,
+        skipCache: false,
+        cacheTtl: 3600,
+      };
+    }
+
+    // Run LLM request (with or without AI Gateway)
+    const aiResponse = (await env.AI.run(MODEL_ID, aiOptions, runOptions)) as Response;
+
+    // Check if the response was blocked by Guardrails or other errors
     if (!aiResponse.ok) {
-      let userMessage = "An error occurred while processing your request.";
+      let errorResponse = {
+        error: "An error occurred while processing your request.",
+        errorType: "general",
+        details: "",
+        usingGateway: !!AI_GATEWAY_ID,
+      };
+
       try {
         const body = await aiResponse.json();
         const { code, message } = parseGatewayError(body);
 
-        if (code === 2016) userMessage = "Prompt was blocked by guardrails.";
-        else if (code === 2017) userMessage = "Response was blocked by guardrails.";
-        else if (typeof message === "string" && message.length) userMessage = message;
+        if (code === 2016) {
+          errorResponse = {
+            error: "Prompt Blocked by Security Policy",
+            errorType: "prompt_blocked",
+            details: AI_GATEWAY_ID
+              ? "Your message was blocked by your organization's AI Gateway security policy. This may be due to content that violates safety guidelines including: hate speech, violence, self-harm, explicit content, or other harmful material."
+              : "Your message was blocked due to security policy.",
+            usingGateway: !!AI_GATEWAY_ID,
+          };
+        } else if (code === 2017) {
+          errorResponse = {
+            error: "Response Blocked by Security Policy",
+            errorType: "response_blocked",
+            details: AI_GATEWAY_ID
+              ? "The AI's response was blocked by your organization's AI Gateway security policy. The model attempted to generate content that violates safety guidelines. Please rephrase your question or try a different topic."
+              : "The AI's response was blocked due to security policy.",
+            usingGateway: !!AI_GATEWAY_ID,
+          };
+        } else if (typeof message === "string" && message.length) {
+          errorResponse.error = message;
+          errorResponse.details = "Please try again or contact support if the issue persists.";
+        }
       } catch {
-        // fallback to generic
+        // fallback to generic error
       }
 
-      return new Response(JSON.stringify({ error: userMessage }), {
-        status: aiResponse.status, // e.g., 424
+      return new Response(JSON.stringify(errorResponse), {
+        status: aiResponse.status,
         headers: { "Content-Type": "application/json" },
       });
     }
