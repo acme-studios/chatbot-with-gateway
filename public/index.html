@@ -288,12 +288,23 @@
         border-top: 1px solid var(--border);
         background: #0c1116;
       }
+      [data-theme="light"] .composer {
+        background: #f8fafc;
+      }
       #user-input {
         min-height: 44px; max-height: 200px; resize: none;
         border: 1px solid var(--border); background: #0e141b; color: var(--text);
         border-radius: 12px; padding: 12px 14px; outline: none;
         transition: box-shadow .15s ease, border-color .15s ease;
         font: 14px/1.5 Inter, system-ui, sans-serif;
+      }
+      [data-theme="light"] #user-input {
+        background: #ffffff;
+        color: #0f172a;
+      }
+      #user-input::placeholder {
+        color: var(--muted);
+        opacity: 0.6;
       }
       #user-input:focus { border-color: var(--cf-orange); box-shadow: 0 0 0 3px var(--ring); }
 

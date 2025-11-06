@@ -158,37 +158,19 @@ async function sendMessage() {
       return;
     }
 
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let acc = "";
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      const chunk = decoder.decode(value, { stream: true });
-      for (const line of chunk.split("\n")) {
-        if (!line.startsWith("data:")) continue;
-        try {
-          const json = JSON.parse(line.slice(5));
-          if (typeof json.response === "string") {
-            acc += json.response;
-            // Render markdown in real-time
-            if (typeof marked !== 'undefined') {
-              contentDiv.innerHTML = marked.parse(acc);
-            } else {
-              contentDiv.textContent = acc;
-            }
-            scrollToBottom();
-          }
-        } catch (e) {
-          // Ignore partial JSON from chunk boundaries
-          console.debug("Stream parse skip:", e);
-        }
-      }
+    // Handle non-streaming JSON response
+    const data = await res.json();
+    const responseText = data.response || "";
+    
+    // Render the response
+    if (typeof marked !== 'undefined') {
+      contentDiv.innerHTML = marked.parse(responseText);
+    } else {
+      contentDiv.textContent = responseText;
     }
+    scrollToBottom();
 
-    chatHistory.push({ role: "assistant", content: acc || "…" });
+    chatHistory.push({ role: "assistant", content: responseText || "…" });
   } catch (err) {
     console.error(err);
     assistantEl.remove();
