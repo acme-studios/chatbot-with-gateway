@@ -1,6 +1,6 @@
 # Cloudflare AI Chat App
 
-A chat application built with Cloudflare Workers AI and AI Gateway using OpenAI's GPT-OSS-120b model. Features streaming responses, markdown rendering, advanced reasoning capabilities, and optional content filtering through AI Gateway guardrails.
+A chat application built with Cloudflare Workers AI and AI Gateway using OpenAI's GPT-OSS-120b model. Features markdown rendering, advanced reasoning capabilities, and optional content filtering through AI Gateway guardrails.
 
 [![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/acme-studios/chatbot-with-gateway)
 
@@ -16,7 +16,6 @@ The UI supports both light and dark themes, renders markdown responses with synt
 - **Model**: @cf/openai/gpt-oss-120b
 - **Context Window**: 128,000 tokens
 - **Reasoning Capabilities**: Configurable reasoning effort (low, medium, high)
-- **Pricing**: $0.35 per M input tokens, $0.75 per M output tokens
 
 ## Quick Start
 
@@ -118,7 +117,7 @@ Simply set `AI_GATEWAY_ID = ""` in `src/index.ts` and redeploy. All requests wil
 - If AI Gateway is configured, the request goes through the gateway first
 - Gateway checks content against guardrails
 - If approved, request goes to Workers AI model
-- Response streams back to the user in real-time
+- Response is returned to the user
 - If blocked, user sees a detailed error message
 
 Without AI Gateway configured, requests go directly to the model.
@@ -146,7 +145,7 @@ The code automatically handles:
 - Conversation history sanitization
 - Blocked content filtering
 - Context window management (last 16 messages)
-- Streaming responses via Server-Sent Events
+- Response parsing and error handling
 
 ## Resources
 
